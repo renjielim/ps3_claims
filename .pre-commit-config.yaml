@@ -1,0 +1,29 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-added-large-files
+
+  - repo: https://github.com/psf/black
+    rev: 23.9.1            # pin to a released tag
+    hooks:
+      - id: black
+        language_version: python3.11   # match your environment
+
+  # - repo: https://github.com/PyCQA/flake8
+  #   rev: 7.1.0
+  #   hooks:
+  #     - id: flake8
+  #       additional_dependencies:
+  #         - flake8-bugbear
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: pytest
+        language: system
+        pass_filenames: false
