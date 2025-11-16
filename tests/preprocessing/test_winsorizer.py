@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import pandas as pd
 
 from ps3.preprocessing import Winsorizer
 
@@ -21,18 +22,27 @@ def test_winsorizer(lower_quantile, upper_quantile):
 
     # assert shape is preserved
     assert df.shape == df_winsorized.shape
+
     # assert values are within the specified quantiles
     lower_bound = df["x"].quantile(lower_quantile)
     upper_bound = df["x"].quantile(upper_quantile)
     assert df_winsorized["x"].min() >= lower_bound
     assert df_winsorized["x"].max() <= upper_bound
-    # assert that values outside the bounds are set to the bounds
-    assert (df_winsorized["x"] == lower_bound).sum() == (df["x"] < lower_bound).sum()
-    assert (df_winsorized["x"] == upper_bound).sum() == (df["x"] > upper_bound).sum()
-    # assert special case when lower_quantile == upper_quantile = 0.5
+
+    # assert that values outside the bounds are set to the bounds, pass in case of lower_quantile=upper_quantile
+    if lower_quantile < upper_quantile:
+        assert (df_winsorized["x"] == lower_bound).sum() == (
+            df["x"] <= lower_bound
+        ).sum()
+        assert (df_winsorized["x"] == upper_bound).sum() == (
+            df["x"] >= upper_bound
+        ).sum()
+
+    # assert when lower_quantile == upper_quantile = 0.5
     if lower_quantile == upper_quantile == 0.5:
         median = df["x"].median()
-        assert (df_winsorized["x"] == median).all()
+        assert np.allclose(df_winsorized["x"].values, median)
+
     # asswert that no values are changed when lower_quantile=0 and upper_quantile=1
     if lower_quantile == 0 and upper_quantile == 1:
         pd.testing.assert_frame_equal(df, df_winsorized)
