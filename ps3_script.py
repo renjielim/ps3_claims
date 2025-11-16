@@ -20,13 +20,17 @@ df = load_transform()
 # %%
 # Train benchmark tweedie model. This is entirely based on the glum tutorial.
 weight = df["Exposure"].values
+if (df["Exposure"] <= 0).any():
+    raise ValueError(
+        "Exposure must be strictly positive to derive per-unit pure premiums."
+    )
 df["PurePremium"] = df["ClaimAmountCut"] / df["Exposure"]
 y = df["PurePremium"]
-# TODO: Why do you think, we divide by exposure here to arrive at our outcome variable?
 
 
 # TODO: use your create_sample_split function here
-# df = create_sample_split(...)
+df = create_sample_split(df, id_column="IDpol", training_frac=0.9)
+
 train = np.where(df["sample"] == "train")
 test = np.where(df["sample"] == "test")
 df_train = df.iloc[train].copy()
@@ -77,33 +81,59 @@ print(
 )
 # %%
 # TODO: Let's add splines for BonusMalus and Density and use a Pipeline.
-# Steps: 
-# 1. Define a Pipeline which chains a StandardScaler and SplineTransformer. 
-#    Choose knots="quantile" for the SplineTransformer and make sure, we 
-#    are only including one intercept in the final GLM. 
+# Steps:
+# 1. Define a Pipeline which chains a StandardScaler and SplineTransformer.
+#    Choose knots="quantile" for the SplineTransformer and make sure, we
+#    are only including one intercept in the final GLM.
 # 2. Put the transforms together into a ColumnTransformer. Here we use OneHotEncoder for the categoricals.
 # 3. Chain the transforms together with the GLM in a Pipeline.
 
 # Let's put together a pipeline
 numeric_cols = ["BonusMalus", "Density"]
+numeric_transformer = Pipeline(
+    steps=[
+        ("scaler", StandardScaler()),
+        (
+            "spline",
+            SplineTransformer(
+                degree=3, n_knots=5, knots="quantile", include_bias=False
+            ),
+        ),
+    ]
+)
+
 preprocessor = ColumnTransformer(
     transformers=[
         # TODO: Add numeric transforms here
+        ("num", numeric_transformer, numeric_cols),
         ("cat", OneHotEncoder(sparse_output=False, drop="first"), categoricals),
     ]
 )
+
 preprocessor.set_output(transform="pandas")
 model_pipeline = Pipeline(
-    # TODO: Define pipeline steps here
+    steps=[
+        ("preprocessor", preprocessor),
+        (
+            "estimate",
+            GeneralizedLinearRegressor(
+                family=TweedieDist, l1_ratio=1, fit_intercept=True
+            ),
+        ),
+    ]
 )
 
 # let's have a look at the pipeline
 model_pipeline
 
+# %%
+
 # let's check that the transforms worked
 model_pipeline[:-1].fit_transform(df_train)
 
 model_pipeline.fit(df_train, y_train_t, estimate__sample_weight=w_train_t)
+
+# %%
 
 pd.DataFrame(
     {
@@ -144,9 +174,14 @@ print(
 # 1: Define the modelling pipeline. Tip: This can simply be a LGBMRegressor based on X_train_t from before.
 # 2. Make sure we are choosing the correct objective for our estimator.
 
-model_pipeline.fit(X_train_t, y_train_t, estimate__sample_weight=w_train_t)
-df_test["pp_t_lgbm"] = model_pipeline.predict(X_test_t)
-df_train["pp_t_lgbm"] = model_pipeline.predict(X_train_t)
+model_pipeline_gbm = Pipeline(
+    steps=[("estimate", LGBMRegressor(objective="tweedie", tweedie_variance_power=1.5))]
+)
+
+
+model_pipeline_gbm.fit(X_train_t, y_train_t, estimate__sample_weight=w_train_t)
+df_test["pp_t_lgbm"] = model_pipeline_gbm.predict(X_test_t)
+df_train["pp_t_lgbm"] = model_pipeline_gbm.predict(X_train_t)
 print(
     "training loss t_lgbm:  {}".format(
         TweedieDist.deviance(y_train_t, df_train["pp_t_lgbm"], sample_weight=w_train_t)
@@ -165,14 +200,24 @@ print(
 # TODO: Let's tune the LGBM to reduce overfitting.
 # Steps:
 # 1. Define a `GridSearchCV` object with our lgbm pipeline/estimator. Tip: Parameters for a specific step of the pipeline
-# can be passed by <step_name>__param. 
+# can be passed by <step_name>__param.
 
 # Note: Typically we tune many more parameters and larger grids,
 # but to save compute time here, we focus on getting the learning rate
 # and the number of estimators somewhat aligned -> tune learning_rate and n_estimators
-cv = GridSearchCV(
 
+cv = GridSearchCV(
+    estimator=model_pipeline_gbm,
+    param_grid={
+        "estimate__learning_rate": [0.01, 0.1, 0.2],
+        "estimate__n_estimators": [100, 200, 500],
+    },
+    scoring="neg_mean_poisson_deviance",
+    cv=3,
+    n_jobs=-1,
+    verbose=1,
 )
+
 cv.fit(X_train_t, y_train_t, estimate__sample_weight=w_train_t)
 
 df_test["pp_t_lgbm"] = cv.best_estimator_.predict(X_test_t)
