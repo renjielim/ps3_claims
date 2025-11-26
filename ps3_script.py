@@ -219,7 +219,7 @@ cv = GridSearchCV(
 )
 
 cv.fit(X_train_t, y_train_t, estimate__sample_weight=w_train_t)
-
+best_model_unconstrained = cv.best_estimator_
 df_test["pp_t_lgbm"] = cv.best_estimator_.predict(X_test_t)
 df_train["pp_t_lgbm"] = cv.best_estimator_.predict(X_train_t)
 
@@ -383,9 +383,9 @@ plt.plot()
 # EXERCISE 2
 # Re-fit the best constrained lgbm estimator from the cross-validation and provide the tuples of the test and train dataset to the estimator via eval_set
 
-best_model = cv.best_estimator_
+best_model_constrained = cv.best_estimator_
 
-best_model.fit(
+best_model_constrained.fit(
     X_train_t,
     y_train_t,
     estimate__sample_weight=w_train_t,
@@ -409,6 +409,7 @@ from ps3.evaluation import (
 )
 
 # %%
+# EXERCISE 3
 # evaluate constrained lgbm
 results_constrained = evaluate_all(y_test_t, df_test["pp_t_lgbm_constrained"], w_test_t)
 print("Evaluation metrics for constrained LGBM:")
@@ -452,4 +453,38 @@ ax.set(
 )
 ax.legend(loc="upper left")
 plt.plot()
+# EXERCISE 4
+# %%
+import dalex as dx
+
+explainer_constrained = dx.Explainer(
+    best_model_constrained,
+    X_train_t,
+    y_train_t,
+    weights=w_train_t,
+    label="LGBM Constrained",
+)
+
+explainer_unconstrained = dx.Explainer(
+    best_model_unconstrained,
+    X_train_t,
+    y_train_t,
+    weights=w_train_t,
+    label="LGBM Unconstrained",
+)
+
+
+# %%
+pdp_constrained = explainer_constrained.model_profile()
+pdp_unconstrained = explainer_unconstrained.model_profile()
+# %%
+pdp_constrained.plot()
+# %%
+pdp_unconstrained.plot()
+
+# it's clear now monotonicity not present here
+# %%
+pdp_constrained.plot(pdp_unconstrained)
+
+
 # %%
