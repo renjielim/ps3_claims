@@ -488,3 +488,22 @@ pdp_constrained.plot(pdp_unconstrained)
 
 
 # %%
+explainer_glm = dx.Explainer(
+    t_glm1,
+    X_train_t,
+    y_train_t,
+    weights=w_train_t,
+    label="glm",
+)
+
+# %%
+x0 = X_test_t.iloc[[0]]
+
+# %%
+shap_lgbm = explainer_constrained.predict_parts(x0, type="shap")
+
+shap_glm = explainer_glm.predict_parts(x0, type="shap")
+# %%
+shap_lgbm.plot()
+shap_glm.plot()
+# Direction of contributions match for all features but magnitude differs eg. for region and area
