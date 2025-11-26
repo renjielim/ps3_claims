@@ -294,4 +294,162 @@ ax.set(
 ax.legend(loc="upper left")
 plt.plot()
 
+# PS4 EXERCISE 1
+# plot average claim amount against BonusMalus, weighted by Exposure
+
+# %%
+fig, ax = plt.subplots(figsize=(8, 6))
+df_test.groupby("BonusMalus").apply(
+    lambda x: np.average(x["pp_t_lgbm"], weights=x["Exposure"])
+).plot(ax=ax)
+ax.set(
+    title="Average Predicted (LGBM) Premium vs BonusMalus",
+    xlabel="BonusMalus",
+    ylabel="Average Predicted (LGBM) Premium (weighted by Exposure)",
+)
+plt.plot()
+
+# %%
+# run a new prediction with a monotonic constraint on BonusMalus
+model_pipeline_gbm_mc = Pipeline(
+    steps=[
+        (
+            "estimate",
+            LGBMRegressor(
+                objective="tweedie",
+                tweedie_variance_power=1.5,
+                monotone_constraints=[0, 0, 0, 0, 0, 0, 0, 1, 0],
+            ),
+        )
+    ]
+)
+
+cv = GridSearchCV(
+    estimator=model_pipeline_gbm_mc,
+    param_grid={
+        "estimate__learning_rate": [0.01, 0.1, 0.2],
+        "estimate__n_estimators": [100, 200, 500],
+    },
+    scoring="neg_mean_poisson_deviance",
+    cv=3,
+    n_jobs=-1,
+    verbose=1,
+)
+
+cv.fit(X_train_t, y_train_t, estimate__sample_weight=w_train_t)
+
+df_test["pp_t_lgbm_constrained"] = cv.best_estimator_.predict(X_test_t)
+df_train["pp_t_lgbm_constrained"] = cv.best_estimator_.predict(X_train_t)
+
+# %%
+print(
+    "training loss t_lgbm_mc:  {}".format(
+        TweedieDist.deviance(
+            y_train_t, df_train["pp_t_lgbm_constrained"], sample_weight=w_train_t
+        )
+        / np.sum(w_train_t)
+    )
+)
+
+print(
+    "testing loss t_lgbm_mc:  {}".format(
+        TweedieDist.deviance(
+            y_test_t, df_test["pp_t_lgbm_constrained"], sample_weight=w_test_t
+        )
+        / np.sum(w_test_t)
+    )
+)
+
+print(
+    "Total claim amount on test set, observed = {}, predicted = {}".format(
+        df["ClaimAmountCut"].values[test].sum(),
+        np.sum(df["Exposure"].values[test] * df_test["pp_t_lgbm_constrained"]),
+    )
+)
+
+# %%
+# plot average claim amount (after constrain) against BonusMalus, weighted by Exposure
+fig, ax = plt.subplots(figsize=(8, 6))
+df_test.groupby("BonusMalus").apply(
+    lambda x: np.average(x["pp_t_lgbm_constrained"], weights=x["Exposure"])
+).plot(ax=ax)
+ax.set(
+    title="Average Predicted (LGBM) constrained Premium vs BonusMalus",
+    xlabel="BonusMalus",
+    ylabel="Average Predicted (LGBM) Premium (weighted by Exposure)",
+)
+plt.plot()
+# %%
+# EXERCISE 2
+# Re-fit the best constrained lgbm estimator from the cross-validation and provide the tuples of the test and train dataset to the estimator via eval_set
+
+best_model = cv.best_estimator_
+
+best_model.fit(
+    X_train_t,
+    y_train_t,
+    estimate__sample_weight=w_train_t,
+    estimate__eval_set=[(X_train_t, y_train_t), (X_test_t, y_test_t)],
+    estimate__eval_sample_weight=[w_train_t, w_test_t],
+)
+
+
+# %%
+import lightgbm as lgb
+
+lgb.plot_metric(best_model.named_steps["estimate"])
+
+# %%
+
+from ps3.evaluation import (
+    evaluate_all,
+    evaluate_bias,
+    evaluate_deviance,
+    evaluate_mae_rmse,
+)
+
+# %%
+# evaluate constrained lgbm
+results_constrained = evaluate_all(y_test_t, df_test["pp_t_lgbm_constrained"], w_test_t)
+print("Evaluation metrics for constrained LGBM:")
+print(results_constrained)
+# %%
+# evaluate unconstrained lgbm
+results_unconstrained = evaluate_all(y_test_t, df_test["pp_t_lgbm"], w_test_t)
+print("Evaluation metrics for unconstrained LGBM:")
+print(results_unconstrained)
+# %%
+# lorenz curve for all models
+fig, ax = plt.subplots(figsize=(8, 8))
+
+for label, y_pred in [
+    ("LGBM", df_test["pp_t_lgbm"]),
+    ("GLM Benchmark", df_test["pp_t_glm1"]),
+    ("GLM Splines", df_test["pp_t_glm2"]),
+    ("LGBM Constrained", df_test["pp_t_lgbm_constrained"]),
+]:
+    ordered_samples, cum_claims = lorenz_curve(
+        df_test["PurePremium"], y_pred, df_test["Exposure"]
+    )
+    gini = 1 - 2 * auc(ordered_samples, cum_claims)
+    label += f" (Gini index: {gini: .3f})"
+    ax.plot(ordered_samples, cum_claims, linestyle="-", label=label)
+
+# Oracle model: y_pred == y_test
+ordered_samples, cum_claims = lorenz_curve(
+    df_test["PurePremium"], df_test["PurePremium"], df_test["Exposure"]
+)
+gini = 1 - 2 * auc(ordered_samples, cum_claims)
+label = f"Oracle (Gini index: {gini: .3f})"
+ax.plot(ordered_samples, cum_claims, linestyle="-.", color="gray", label=label)
+
+# Random baseline
+ax.plot([0, 1], [0, 1], linestyle="--", color="black", label="Random baseline")
+ax.set(
+    title="Lorenz Curves",
+    xlabel="Fraction of policyholders\n(ordered by model from safest to riskiest)",
+    ylabel="Fraction of total claim amount",
+)
+ax.legend(loc="upper left")
+plt.plot()
 # %%
